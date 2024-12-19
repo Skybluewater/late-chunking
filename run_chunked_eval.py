@@ -65,7 +65,7 @@ DEFAULT_TRUNCATE_MAX_LENGTH = None
     '--long-late-chunking-embed-size',
     default=DEFAULT_LONG_LATE_CHUNKING_EMBED_SIZE,
     type=int,
-    help='Number of tokens per chunk for fixed strategy.',
+    help='Number of tokens per macro chunk used for long late chunking.',
 )
 @click.option(
     '--long-late-chunking-overlap-size',

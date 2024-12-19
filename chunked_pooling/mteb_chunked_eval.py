@@ -52,7 +52,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
             'embedding_model_name': embedding_model_name,
         }
         self.truncate_max_length = (
-            truncate_max_length if truncate_max_length > 0 else None
+            truncate_max_length if truncate_max_length is not None and truncate_max_length > 0 else None
         )
 
         self.long_late_chunking_embed_size = long_late_chunking_embed_size
