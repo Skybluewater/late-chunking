@@ -360,9 +360,9 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             annotations,
                             max_length=self.truncate_max_length,
                         )
-                        output_embs = self._dynamic_chunking(
-                            output_embs, annotations, 0.5
-                        )
+                        output_embs = [self._dynamic_chunking(
+                            output_embs[0], annotations, 0.5
+                        )]
                     corpus_embs.extend(output_embs)
 
             max_chunks = max([len(x) for x in corpus_embs])
