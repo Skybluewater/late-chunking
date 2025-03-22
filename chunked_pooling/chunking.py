@@ -1,8 +1,9 @@
 import bisect
 import logging
+import torch
 from typing import Dict, List, Optional, Tuple, Union
 
-from llama_index.core.node_parser import SemanticSplitterNodeParser
+from llama_index.core.node_parser import SemanticSplitterNodeParser, SemanticDoubleMergingSplitterNodeParser
 from llama_index.core.schema import Document
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from transformers import AutoTokenizer
@@ -32,10 +33,26 @@ class Chunker:
             model_name=self.embedding_model_name,
             trust_remote_code=True,
             embed_batch_size=1,
+            device='cuda' if torch.cuda.is_available() else 'cpu',
         )
         self.splitter = SemanticSplitterNodeParser(
             embed_model=self.embed_model,
-            show_progress=False,
+            show_progress=True,
+        )
+    
+    def _setup_semantic_double_merging_chunking(self, embedding_model_name):
+        if embedding_model_name:
+            self.embedding_model_name = embedding_model_name
+
+        self.embed_model = HuggingFaceEmbedding(
+            model_name=self.embedding_model_name,
+            trust_remote_code=True,
+            embed_batch_size=1,
+            device='cuda' if torch.cuda.is_available() else 'cpu',
+        )
+        self.splitter = SemanticDoubleMergingSplitterNodeParser(
+            embed_model=self.embed_model,
+            show_progress=True,
         )
 
     def chunk_semantically(
@@ -51,7 +68,7 @@ class Chunker:
         nodes = [
             (node.start_char_idx, node.end_char_idx)
             for node in self.splitter.get_nodes_from_documents(
-                [Document(text=text)], show_progress=False
+                [Document(text=text)], show_progress=True
             )
         ]
 
@@ -86,6 +103,54 @@ class Chunker:
 
         return chunk_spans
 
+    def chunk_by_semantic_double_merging(
+        self,
+        text: str,
+        tokenizer: 'AutoTokenizer',
+        embedding_model_name: Optional[str] = None,
+    ) -> List[Tuple[int, int]]:
+        if self.embed_model is None:
+            self._setup_semantic_double_merging_chunking(embedding_model_name)
+
+        # Get semantic nodes
+        nodes = [
+            (node.start_char_idx, node.end_char_idx)
+            for node in self.splitter.get_nodes_from_documents(
+                [Document(text=text)], show_progress=True
+            )
+        ]
+
+        # Tokenize the entire text
+        tokens = tokenizer.encode_plus(
+            text,
+            return_offsets_mapping=True,
+            add_special_tokens=False,
+            padding=True,
+            truncation=True,
+        )
+        token_offsets = tokens.offset_mapping
+
+        chunk_spans = []
+
+        for char_start, char_end in nodes:
+            # Convert char indices to token indices
+            start_chunk_index = bisect.bisect_left(
+                [offset[0] for offset in token_offsets], char_start
+            )
+            end_chunk_index = bisect.bisect_right(
+                [offset[1] for offset in token_offsets], char_end
+            )
+
+            # Add the chunk span if it's within the tokenized text
+            if start_chunk_index < len(token_offsets) and end_chunk_index <= len(
+                token_offsets
+            ):
+                chunk_spans.append((start_chunk_index, end_chunk_index))
+            else:
+                break
+
+        return chunk_spans
+    
     def chunk_by_tokens(
         self,
         text: str,
@@ -155,5 +220,11 @@ class Chunker:
             return self.chunk_by_tokens(text, chunk_size, tokenizer)
         elif chunking_strategy == "sentences":
             return self.chunk_by_sentences(text, n_sentences, tokenizer)
+        elif chunking_strategy == "semantic_double_merging":
+            return self.chunk_by_semantic_double_merging(
+                text,
+                embedding_model_name=embedding_model_name,
+                tokenizer=tokenizer,
+            )
         else:
             raise ValueError("Unsupported chunking strategy")

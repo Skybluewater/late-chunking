@@ -7,8 +7,8 @@ from chunked_pooling.chunked_eval_tasks import *
 from chunked_pooling.wrappers import load_model
 
 DEFAULT_CHUNKING_STRATEGY = 'fixed'
-DEFAULT_CHUNK_SIZE = 256
-DEFAULT_N_SENTENCES = 5
+DEFAULT_CHUNK_SIZE = 64
+DEFAULT_N_SENTENCES = 1
 BATCH_SIZE = 1
 DEFAULT_LONG_LATE_CHUNKING_OVERLAP_SIZE = 256
 DEFAULT_LONG_LATE_CHUNKING_EMBED_SIZE = 0  # set to 0 to disable long late chunking
@@ -18,7 +18,7 @@ DEFAULT_TRUNCATE_MAX_LENGTH = None
 @click.command()
 @click.option(
     '--model-name',
-    default='jinaai/jina-embeddings-v2-small-en',
+    default='jinaai/jina-embeddings-v3',
     help='The name of the model to use.',
 )
 @click.option(
@@ -39,7 +39,7 @@ DEFAULT_TRUNCATE_MAX_LENGTH = None
 )
 @click.option(
     '--chunking-model',
-    default=None,
+    default='jinaai/jina-embeddings-v3',
     required=False,
     help='The name of the model used for semantic chunking.',
 )
