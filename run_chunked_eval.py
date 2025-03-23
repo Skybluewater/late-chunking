@@ -2,6 +2,7 @@ import click
 import torch.cuda
 from mteb import MTEB
 from transformers import AutoModel, AutoTokenizer
+from typing import Any, Optional, Union
 
 from chunked_pooling.chunked_eval_tasks import *
 from chunked_pooling.wrappers import load_model
@@ -13,6 +14,7 @@ BATCH_SIZE = 1
 DEFAULT_LONG_LATE_CHUNKING_OVERLAP_SIZE = 256
 DEFAULT_LONG_LATE_CHUNKING_EMBED_SIZE = 0  # set to 0 to disable long late chunking
 DEFAULT_TRUNCATE_MAX_LENGTH = None
+DEFAULT_PRUNE_SIZE = -1 # set to -1 to disable dataset pruning
 
 
 @click.command()
@@ -73,6 +75,12 @@ DEFAULT_TRUNCATE_MAX_LENGTH = None
     type=int,
     help='Token length of the embeddings that come before/after soft boundaries (i.e. overlapping embeddings). Above zero, overlap is used between neighbouring embeddings.',
 )
+@click.option(
+    '--prune-size',
+    default=DEFAULT_PRUNE_SIZE,
+    type=int,
+    help='Number of sentences per chunk for sentence strategy.',
+)
 def main(
     model_name,
     model_weights,
@@ -85,12 +93,16 @@ def main(
     n_sentences,
     long_late_chunking_embed_size,
     long_late_chunking_overlap_size,
+    prune_size,
 ):
     try:
         task_cls = globals()[task_name]
     except:
         raise ValueError(f'Unknown task name: {task_name}')
-
+    
+    if prune_size < 0:
+        prune_size = None
+    
     if truncate_max_length is not None and (long_late_chunking_embed_size > 0):
         truncate_max_length = None
         print(
@@ -119,7 +131,7 @@ def main(
         task_cls(
             chunked_pooling_enabled=True,
             tokenizer=tokenizer,
-            prune_size=None,
+            prune_size=prune_size,
             truncate_max_length=truncate_max_length,
             long_late_chunking_embed_size=long_late_chunking_embed_size,
             long_late_chunking_overlap_size=long_late_chunking_overlap_size,
@@ -131,7 +143,7 @@ def main(
         tasks=tasks,
         chunked_pooling_enabled=True,
         tokenizer=tokenizer,
-        prune_size=None,
+        prune_size=prune_size,
         **chunking_args,
     )
     evaluation.run(
@@ -148,7 +160,7 @@ def main(
         task_cls(
             chunked_pooling_enabled=False,
             tokenizer=tokenizer,
-            prune_size=None,
+            prune_size=prune_size,
             truncate_max_length=truncate_max_length,
             **chunking_args,
         )
@@ -158,7 +170,7 @@ def main(
         tasks=tasks,
         chunked_pooling_enabled=False,
         tokenizer=tokenizer,
-        prune_size=None,
+        prune_size=prune_size,
         **chunking_args,
     )
     evaluation.run(
