@@ -178,6 +178,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
             indices = np.arange(n)
             # Compute the squared difference matrix: element (i,j) = (|i-j|)^2
             denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))**2
+            # denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))
             # Avoid division by zero on the diagonal (set divisor to 1 for diagonal elements)
             denom[denom == 0] = 1
             return sim_matrix / denom
@@ -273,6 +274,120 @@ class AbsTaskChunkedRetrieval(AbsTask):
             span = span.next
         return pooled_embeddings
     
+    def _use_chunking(
+            self,
+            model,
+            corpus,
+            queries,
+            relevant_docs,
+            lang=None,
+            batch_size=1,
+            encode_kwargs=None,
+            **kwargs,
+        ):
+        corpus = self._apply_chunking(corpus, self.tokenizer)
+        # {document_id: [{text: text_chunk}, ...]}
+        query_ids = list(queries.keys())
+        query_texts = [queries[k] for k in query_ids]
+        if hasattr(model, 'encode_queries'):
+            query_embs = model.encode_queries(query_texts)
+        else:
+            query_embs = model.encode(query_texts)
+
+        corpus_ids = list(corpus.keys())
+        corpus = [corpus[k] for k in sorted(corpus)]
+        corpus_embs = []
+        # corpus = self._flatten_chunks(corpus)
+        with torch.no_grad():
+            for inputs in tqdm(
+                self._batch_inputs(
+                    corpus,
+                    batch_size=batch_size,
+                ),
+                total=(len(corpus) // batch_size),
+            ):
+                if self.model_has_instructions:
+                    instr = model.get_instructions()[1]
+                    instr_tokens = self.tokenizer(instr, add_special_tokens=False)
+                    n_instruction_tokens = len(instr_tokens[0])
+                else:
+                    instr = ''
+                    n_instruction_tokens = 0
+                
+                chunk_spans = []
+                for text in inputs[0]:
+                    text = text['text']
+                    tokens = self.tokenizer.encode_plus(
+                        text, return_offsets_mapping=True, add_special_tokens=False
+                    )
+                    token_offsets = tokens.offset_mapping
+                    # decoded_text = self.tokenizer.decode(tokens['input_ids'])
+                    chunk_spans.append([0, len(token_offsets)])
+                
+                chunk_spans = [self._extend_special_tokens(
+                    [chunk_span],
+                    n_instruction_tokens=n_instruction_tokens,
+                ) for chunk_span in chunk_spans]
+                
+                text_inputs = []
+                for x in inputs[0]:
+                    text_inputs.append(instr + x['text'])
+
+                tokenized_texts = [
+                    self.tokenizer(
+                        text,
+                        return_tensors='pt',
+                        padding=True,
+                        truncation=self.truncate_max_length is not None,
+                        max_length=self.truncate_max_length,
+                    )
+                    for text in text_inputs
+                ]
+                
+                model_inputs = [
+                    {k: v.to(model.device) for k, v in x.items()}
+                    for x in tokenized_texts
+                ]
+                
+                if model.device.type == 'cuda':
+                    model_inputs = [{
+                        k: v.to(model.device) for k, v in input.items()
+                    } for input in model_inputs]
+                
+                model_outputs = [model(**model_input) for model_input in model_inputs]
+                
+                # model_outputs = [output[chunk_spans[i][0]: chunk_spans[i][1]] for i, output in enumerate(model_outputs)]
+                
+                output_embs = []
+                # output_embs = [torch.mean(output[0], dim=1, keepdim=True) for output in model_outputs]
+                for output, chunk_span in zip(model_outputs, chunk_spans):
+                    token_embeddings = output[0][0]
+                    output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
+                    output_emb = torch.mean(output_emb, dim=0, keepdim=True)
+                    output_emb = output_emb.float().detach().cpu().numpy()
+                    output_embs.append(output_emb)
+                
+                output_embs = [self._dynamic_chunking(
+                    output_embs[0], None, 0.5
+                )]
+                corpus_embs.extend(output_embs)
+        
+        max_chunks = max([len(x) for x in corpus_embs])
+        k_values = self._calculate_k_values(max_chunks)
+        # determine the maximum number of documents to consider in a ranking
+        max_k = int(max(k_values) / max_chunks)
+        (
+            chunk_id_list,
+            doc_to_chunk,
+            flattened_corpus_embs,
+        ) = self.flatten_corpus_embs(corpus_embs, corpus_ids)
+        similarity_matrix = np.dot(query_embs, flattened_corpus_embs.T)
+        results = self.get_results(
+            chunk_id_list, k_values, query_ids, similarity_matrix
+        )
+        return results, max_k
+
+    
     def _evaluate_monolingual(
         self,
         model,
@@ -288,19 +403,29 @@ class AbsTaskChunkedRetrieval(AbsTask):
             corpus = self._truncate_documents(corpus)
         # split corpus into chunks
         if not self.chunked_pooling_enabled:
-            corpus = self._apply_chunking(corpus, self.tokenizer)
-            max_chunks = max([len(x) for x in corpus.values()])
-            corpus = self._flatten_chunks(corpus)
-            k_values = self._calculate_k_values(max_chunks)
-            # determine the maximum number of documents to consider in a ranking
-            max_k = int(max(k_values) / max_chunks)
-            retriever = RetrievalEvaluator(
+            # corpus = self._apply_chunking(corpus, self.tokenizer)
+            # max_chunks = max([len(x) for x in corpus.values()])
+            # corpus = self._flatten_chunks(corpus)
+            # k_values = self._calculate_k_values(max_chunks)
+            # # determine the maximum number of documents to consider in a ranking
+            # max_k = int(max(k_values) / max_chunks)
+            # retriever = RetrievalEvaluator(
+            #     model,
+            #     k_values=k_values,
+            #     encode_kwargs=(encode_kwargs or dict()),
+            #     **kwargs,
+            # )
+            # results = retriever(corpus, queries)
+            results, max_k = self._use_chunking(
                 model,
-                k_values=k_values,
-                encode_kwargs=(encode_kwargs or dict()),
+                corpus,
+                queries,
+                relevant_docs,
+                lang=lang,
+                batch_size=batch_size,
+                encode_kwargs=encode_kwargs,
                 **kwargs,
             )
-            results = retriever(corpus, queries)
         else:
             query_ids = list(queries.keys())
             query_texts = [queries[k] for k in query_ids]
@@ -360,9 +485,9 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             annotations,
                             max_length=self.truncate_max_length,
                         )
-                        output_embs = [self._dynamic_chunking(
-                            output_embs[0], annotations, 0.5
-                        )]
+                    output_embs = [self._dynamic_chunking(
+                        output_embs[0], annotations, 0.5
+                    )]
                     corpus_embs.extend(output_embs)
 
             max_chunks = max([len(x) for x in corpus_embs])
