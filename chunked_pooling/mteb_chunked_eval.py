@@ -249,11 +249,13 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     span2.prev = None
                     span2.next = None
                     del span2
+                    # update tail again for the original tail may be deleted
                     if span1.next is None:
                         tail = span1
                     if span1.prev is not root:
                         recursive_merge(span1.prev, span1)
                     return
+                
                 span1.end = best_mid - 1
                 span2.start = best_mid
                 if span1.prev is not root:
@@ -306,7 +308,6 @@ class AbsTaskChunkedRetrieval(AbsTask):
             query_embs = model.encode(query_texts)
 
         corpus_ids = list(corpus.keys())
-        # corpus = [corpus[k] for k in sorted(corpus)]
         corpus = [corpus[k] for k in corpus_ids]
         corpus_embs = []
         # corpus = self._flatten_chunks(corpus)
@@ -400,7 +401,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
         results = self.get_results(
             chunk_id_list, k_values, query_ids, similarity_matrix
         )
-        return results, max_k
+        return results, max_k, k_values
 
     
     def _evaluate_monolingual(
@@ -418,20 +419,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
             corpus = self._truncate_documents(corpus)
         # split corpus into chunks
         if not self.chunked_pooling_enabled:
-            # corpus = self._apply_chunking(corpus, self.tokenizer)
-            # max_chunks = max([len(x) for x in corpus.values()])
-            # corpus = self._flatten_chunks(corpus)
-            # k_values = self._calculate_k_values(max_chunks)
-            # # determine the maximum number of documents to consider in a ranking
-            # max_k = int(max(k_values) / max_chunks)
-            # retriever = RetrievalEvaluator(
-            #     model,
-            #     k_values=k_values,
-            #     encode_kwargs=(encode_kwargs or dict()),
-            #     **kwargs,
-            # )
-            # results = retriever(corpus, queries)
-            results, max_k = self._use_chunking(
+            results, max_k, k_values = self._use_chunking(
                 model,
                 corpus,
                 queries,
