@@ -314,63 +314,64 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     instr = ''
                     n_instruction_tokens = 0
                 
-                chunk_spans = []
-                for text in inputs[0]:
-                    text = text['text']
-                    tokens = self.tokenizer.encode_plus(
-                        text, return_offsets_mapping=True, add_special_tokens=False
-                    )
-                    token_offsets = tokens.offset_mapping
-                    # decoded_text = self.tokenizer.decode(tokens['input_ids'])
-                    chunk_spans.append([0, len(token_offsets)])
-                
-                chunk_spans = [self._extend_special_tokens(
-                    [chunk_span],
-                    n_instruction_tokens=n_instruction_tokens,
-                ) for chunk_span in chunk_spans]
-                
-                text_inputs = []
-                for x in inputs[0]:
-                    text_inputs.append(instr + x['text'])
+                for input in inputs:
+                    chunk_spans = []
+                    for text in input:
+                        text = text['text']
+                        tokens = self.tokenizer.encode_plus(
+                            text, return_offsets_mapping=True, add_special_tokens=False
+                        )
+                        token_offsets = tokens.offset_mapping
+                        # decoded_text = self.tokenizer.decode(tokens['input_ids'])
+                        chunk_spans.append([0, len(token_offsets)])
+                    
+                    chunk_spans = [self._extend_special_tokens(
+                        [chunk_span],
+                        n_instruction_tokens=n_instruction_tokens,
+                    ) for chunk_span in chunk_spans]
+                    
+                    text_inputs = []
+                    for x in input:
+                        text_inputs.append(instr + x['text'])
 
-                tokenized_texts = [
-                    self.tokenizer(
-                        text,
-                        return_tensors='pt',
-                        padding=True,
-                        truncation=self.truncate_max_length is not None,
-                        max_length=self.truncate_max_length,
-                    )
-                    for text in text_inputs
-                ]
-                
-                model_inputs = [
-                    {k: v.to(model.device) for k, v in x.items()}
-                    for x in tokenized_texts
-                ]
-                
-                if model.device.type == 'cuda':
-                    model_inputs = [{
-                        k: v.to(model.device) for k, v in input.items()
-                    } for input in model_inputs]
-                
-                model_outputs = [model(**model_input) for model_input in model_inputs]
-                
-                # model_outputs = [output[chunk_spans[i][0]: chunk_spans[i][1]] for i, output in enumerate(model_outputs)]
-                
-                output_embs = []
-                # output_embs = [torch.mean(output[0], dim=1, keepdim=True) for output in model_outputs]
-                for output, chunk_span in zip(model_outputs, chunk_spans):
-                    token_embeddings = output[0][0]
-                    output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
-                    output_emb = torch.mean(output_emb, dim=0, keepdim=True)
-                    output_emb = output_emb.float().detach().cpu().numpy()
-                    output_embs.append(output_emb)
-                
-                output_embs = [self._dynamic_chunking(
-                    output_embs[0], None, 0.5
-                )]
-                corpus_embs.extend(output_embs)
+                    tokenized_texts = [
+                        self.tokenizer(
+                            text,
+                            return_tensors='pt',
+                            padding=True,
+                            truncation=self.truncate_max_length is not None,
+                            max_length=self.truncate_max_length,
+                        )
+                        for text in text_inputs
+                    ]
+                    
+                    model_inputs = [
+                        {k: v.to(model.device) for k, v in x.items()}
+                        for x in tokenized_texts
+                    ]
+                    
+                    if model.device.type == 'cuda':
+                        model_inputs = [{
+                            k: v.to(model.device) for k, v in input.items()
+                        } for input in model_inputs]
+                    
+                    model_outputs = [model(**model_input) for model_input in model_inputs]
+                    
+                    # model_outputs = [output[chunk_spans[i][0]: chunk_spans[i][1]] for i, output in enumerate(model_outputs)]
+                    
+                    output_embs = []
+                    # output_embs = [torch.mean(output[0], dim=1, keepdim=True) for output in model_outputs]
+                    for output, chunk_span in zip(model_outputs, chunk_spans):
+                        token_embeddings = output[0][0]
+                        output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
+                        output_emb = torch.mean(output_emb, dim=0, keepdim=True)
+                        output_emb = output_emb.float().detach().cpu().numpy()
+                        output_embs.append(output_emb[0])
+                    
+                    output_embs = [self._dynamic_chunking(
+                        output_embs, None, 0.5
+                    )]
+                    corpus_embs.extend(output_embs)
         
         max_chunks = max([len(x) for x in corpus_embs])
         k_values = self._calculate_k_values(max_chunks)
@@ -486,8 +487,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             max_length=self.truncate_max_length,
                         )
                     output_embs = [self._dynamic_chunking(
-                        output_embs[0], annotations, 0.5
-                    )]
+                        output_emb, annotations, 0.5
+                    ) for output_emb in output_embs]
                     corpus_embs.extend(output_embs)
 
             max_chunks = max([len(x) for x in corpus_embs])
