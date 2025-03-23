@@ -226,7 +226,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     del span2
                     if span1.next is None:
                         tail = span1
-                    # recursive_merge(span1.prev, span1)
+                    if span1.prev is not root:
+                        recursive_merge(span1.prev, span1)
                 return
             
             for mid in range(min(start1, start2), max(end1, end2) + 1):
@@ -250,11 +251,12 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     del span2
                     if span1.next is None:
                         tail = span1
-                    # recursive_merge(span1.prev, span1)
+                    if span1.prev is not root:
+                        recursive_merge(span1.prev, span1)
                     return
                 span1.end = best_mid - 1
                 span2.start = best_mid
-                if span1.prev != root:
+                if span1.prev is not root:
                     recursive_merge(span1.prev, span1)
             
         sim_matrix = cal_similarity(output_embs)
@@ -269,7 +271,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
                 new_span = Span(idx, idx, tail, None)
                 tail.next = new_span
                 tail = new_span
-                recursive_merge(tail, new_span)
+                recursive_merge(tail.prev, tail)
         
         # Collect the merged spans
         pooled_embeddings = []
@@ -304,7 +306,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
             query_embs = model.encode(query_texts)
 
         corpus_ids = list(corpus.keys())
-        corpus = [corpus[k] for k in sorted(corpus)]
+        # corpus = [corpus[k] for k in sorted(corpus)]
+        corpus = [corpus[k] for k in corpus_ids]
         corpus_embs = []
         # corpus = self._flatten_chunks(corpus)
         with torch.no_grad():
