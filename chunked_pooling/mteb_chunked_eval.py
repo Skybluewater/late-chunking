@@ -218,6 +218,9 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     span1.start = start1
                     span1.end = end2
                     span1.next = span2.next
+                    if span2.next is not None:
+                        span2.next.prev = span1
+                    span2.next = None
                     span2.prev = None
                     del span2
                 return
@@ -237,12 +240,15 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     span1.start = start1
                     span1.end = end2
                     span1.next = span2.next
+                    if span2.next is not None:
+                        span2.next.prev = span1
                     span2.prev = None
+                    span2.next = None
                     del span2
                     return
                 span1.end = best_mid - 1
                 span2.start = best_mid
-                if span1.prev.start != -1:
+                if span1.prev != root:
                     recursive_merge(span1.prev, span1)
             
         sim_matrix = cal_similarity(output_embs)
@@ -299,6 +305,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
         corpus_embs = []
         # corpus = self._flatten_chunks(corpus)
         with torch.no_grad():
+            # Assume that corpus_ids is defined earlier as:
+            # corpus_ids = list(sorted(corpus.keys()))
+            corpus_ids_list = corpus_ids[:]  # make a copy of the corpus_ids list
+            doc_counter = 0
             for inputs in tqdm(
                 self._batch_inputs(
                     corpus,
@@ -306,15 +316,18 @@ class AbsTaskChunkedRetrieval(AbsTask):
                 ),
                 total=(len(corpus) // batch_size),
             ):
-                if self.model_has_instructions:
-                    instr = model.get_instructions()[1]
-                    instr_tokens = self.tokenizer(instr, add_special_tokens=False)
-                    n_instruction_tokens = len(instr_tokens[0])
-                else:
-                    instr = ''
-                    n_instruction_tokens = 0
-                
-                for input in inputs:
+                # Process each document in the batch along with its corpus_id.
+                for input, doc_id in zip(inputs, corpus_ids_list[doc_counter : doc_counter + len(inputs)]):
+                    print("Processing Corpus ID:", doc_id)
+                    # Process the current document's chunks.
+                    if self.model_has_instructions:
+                        instr = model.get_instructions()[1]
+                        instr_tokens = self.tokenizer(instr, add_special_tokens=False)
+                        n_instruction_tokens = len(instr_tokens[0])
+                    else:
+                        instr = ''
+                        n_instruction_tokens = 0
+
                     chunk_spans = []
                     for text in input:
                         text = text['text']
@@ -322,17 +335,14 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             text, return_offsets_mapping=True, add_special_tokens=False
                         )
                         token_offsets = tokens.offset_mapping
-                        # decoded_text = self.tokenizer.decode(tokens['input_ids'])
                         chunk_spans.append([0, len(token_offsets)])
-                    
+
                     chunk_spans = [self._extend_special_tokens(
                         [chunk_span],
                         n_instruction_tokens=n_instruction_tokens,
                     ) for chunk_span in chunk_spans]
-                    
-                    text_inputs = []
-                    for x in input:
-                        text_inputs.append(instr + x['text'])
+
+                    text_inputs = [instr + x['text'] for x in input]
 
                     tokenized_texts = [
                         self.tokenizer(
@@ -344,34 +354,32 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         )
                         for text in text_inputs
                     ]
-                    
+
                     model_inputs = [
                         {k: v.to(model.device) for k, v in x.items()}
                         for x in tokenized_texts
                     ]
-                    
+
                     if model.device.type == 'cuda':
                         model_inputs = [{
-                            k: v.to(model.device) for k, v in input.items()
-                        } for input in model_inputs]
-                    
+                            k: v.to(model.device) for k, v in inp.items()
+                        } for inp in model_inputs]
+
                     model_outputs = [model(**model_input) for model_input in model_inputs]
-                    
-                    # model_outputs = [output[chunk_spans[i][0]: chunk_spans[i][1]] for i, output in enumerate(model_outputs)]
-                    
+
                     output_embs = []
-                    # output_embs = [torch.mean(output[0], dim=1, keepdim=True) for output in model_outputs]
                     for output, chunk_span in zip(model_outputs, chunk_spans):
                         token_embeddings = output[0][0]
                         output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
                         output_emb = torch.mean(output_emb, dim=0, keepdim=True)
                         output_emb = output_emb.float().detach().cpu().numpy()
                         output_embs.append(output_emb[0])
-                    
+
                     output_embs = [self._dynamic_chunking(
                         output_embs, None, 0.5
                     )]
                     corpus_embs.extend(output_embs)
+                doc_counter += len(inputs)
         
         max_chunks = max([len(x) for x in corpus_embs])
         k_values = self._calculate_k_values(max_chunks)
