@@ -208,6 +208,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
             return (mid - start) * (end - mid + 1)
         
         def recursive_merge(span1, span2):
+            nonlocal tail
             start1 = span1.start
             end1 = span1.end
             start2 = span2.start
@@ -223,8 +224,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     span2.next = None
                     span2.prev = None
                     del span2
+                    if span1.next is None:
+                        tail = span1
+                    # recursive_merge(span1.prev, span1)
                 return
-            
             
             for mid in range(min(start1, start2), max(end1, end2) + 1):
                 sim_inside = sum(cal_inside_sim(start1, mid, end2)) / cal_inside_coefficient(start1, mid, end2)
@@ -245,6 +248,9 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     span2.prev = None
                     span2.next = None
                     del span2
+                    if span1.next is None:
+                        tail = span1
+                    # recursive_merge(span1.prev, span1)
                     return
                 span1.end = best_mid - 1
                 span2.start = best_mid
@@ -262,11 +268,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
             else:
                 new_span = Span(idx, idx, tail, None)
                 tail.next = new_span
+                tail = new_span
                 recursive_merge(tail, new_span)
-                if tail.next is not None:
-                    tail = tail.next
-                else:
-                    tail = tail
         
         # Collect the merged spans
         pooled_embeddings = []
