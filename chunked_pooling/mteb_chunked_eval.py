@@ -382,10 +382,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         output_emb = output_emb.float().detach().cpu().numpy()
                         output_embs.append(output_emb[0])
 
-                    output_embs = [self._dynamic_chunking(
+                    output_embs = self._dynamic_chunking(
                         output_embs, None, 0.5
-                    )]
-                    corpus_embs.extend(output_embs)
+                    )
+                    corpus_embs.extend([output_embs])
                 doc_counter += len(inputs)
         
         max_chunks = max([len(x) for x in corpus_embs])
