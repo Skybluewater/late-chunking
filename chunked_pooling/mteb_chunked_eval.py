@@ -51,6 +51,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
             'n_sentences': n_sentences,
             'embedding_model_name': embedding_model_name,
         }
+        
+        self.use_dynamic = kwargs.get('use_dynamic', False)
+        self.dis_comp = kwargs.get('dis_comp', 0)
+        self.alpha = kwargs.get('alpha', 1.0)
         self.truncate_max_length = (
             truncate_max_length if truncate_max_length is not None and truncate_max_length > 0 else None
         )
@@ -177,7 +181,15 @@ class AbsTaskChunkedRetrieval(AbsTask):
             n = sim_matrix.shape[0]
             indices = np.arange(n)
             # Compute the squared difference matrix: element (i,j) = (|i-j|)^2
-            denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))**2
+            if self.dis_comp == 0:
+                denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))**2
+            elif self.dis_comp == 1:
+                denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))
+            elif self.dis_comp == 2:
+                # The dis is 1 / 1 + (|i - j|)
+                denom = 1 / (1 + (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1))) * self.alpha)
+            else:
+                denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))**2
             # denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))
             # Avoid division by zero on the diagonal (set divisor to 1 for diagonal elements)
             denom[denom == 0] = 1
@@ -382,9 +394,11 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         output_emb = output_emb.float().detach().cpu().numpy()
                         output_embs.append(output_emb[0])
 
-                    output_embs = self._dynamic_chunking(
-                        output_embs, None, 0.5
-                    )
+                    if self.use_dynamic:
+                        output_embs = self._dynamic_chunking(
+                            output_embs, chunk_spans[0], 0.5
+                        )
+
                     corpus_embs.extend([output_embs])
                 doc_counter += len(inputs)
         
@@ -488,9 +502,12 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             annotations,
                             max_length=self.truncate_max_length,
                         )
-                    output_embs = [self._dynamic_chunking(
-                        output_emb, annotations, 0.5
-                    ) for output_emb in output_embs]
+                    
+                    if self.use_dynamic:
+                        output_embs = [self._dynamic_chunking(
+                            output_emb, annotations, 0.5
+                        ) for output_emb in output_embs]
+                    
                     corpus_embs.extend(output_embs)
 
             max_chunks = max([len(x) for x in corpus_embs])

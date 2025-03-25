@@ -8,13 +8,16 @@ from chunked_pooling.chunked_eval_tasks import *
 from chunked_pooling.wrappers import load_model
 
 DEFAULT_CHUNKING_STRATEGY = 'fixed'
-DEFAULT_CHUNK_SIZE = 64
+DEFAULT_CHUNK_SIZE = 256
 DEFAULT_N_SENTENCES = 1
 BATCH_SIZE = 1
 DEFAULT_LONG_LATE_CHUNKING_OVERLAP_SIZE = 256
 DEFAULT_LONG_LATE_CHUNKING_EMBED_SIZE = 0  # set to 0 to disable long late chunking
 DEFAULT_TRUNCATE_MAX_LENGTH = None
 DEFAULT_PRUNE_SIZE = -1 # set to -1 to disable dataset pruning
+DEFAULT_USE_DYNAMIC = False
+DEFAULT_DIS_COMP = 0
+DEFAULT_DIS_ALPHA = 1
 
 
 @click.command()
@@ -81,6 +84,24 @@ DEFAULT_PRUNE_SIZE = -1 # set to -1 to disable dataset pruning
     type=int,
     help='Number of sentences per chunk for sentence strategy.',
 )
+@click.option(
+    '--use-dynamic',
+    default=DEFAULT_USE_DYNAMIC,
+    type=bool,
+    help='Number of sentences per chunk for sentence strategy.',
+)
+@click.option(
+    '--dis-comp',
+    default=DEFAULT_DIS_COMP,
+    type=int,
+    help='Number of sentences per chunk for sentence strategy.',
+)
+@click.option(
+    '--dis-alpha',
+    default=DEFAULT_DIS_ALPHA,
+    type=float,
+    help='Number of sentences per chunk for sentence strategy.',
+)
 def main(
     model_name,
     model_weights,
@@ -94,6 +115,9 @@ def main(
     long_late_chunking_embed_size,
     long_late_chunking_overlap_size,
     prune_size,
+    use_dynamic,
+    dis_comp,
+    dis_alpha,
 ):
     try:
         task_cls = globals()[task_name]
@@ -135,6 +159,9 @@ def main(
             truncate_max_length=truncate_max_length,
             long_late_chunking_embed_size=long_late_chunking_embed_size,
             long_late_chunking_overlap_size=long_late_chunking_overlap_size,
+            use_dynamic=use_dynamic,
+            dis_comp=dis_comp,
+            alpha=dis_alpha,
             **chunking_args,
         )
     ]
