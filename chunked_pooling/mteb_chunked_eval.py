@@ -55,6 +55,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
         self.use_dynamic = kwargs.get('use_dynamic', False)
         self.dis_comp = kwargs.get('dis_comp', 0)
         self.alpha = kwargs.get('alpha', 1.0)
+        self.max_length = kwargs.get('max_length', 512)
         self.truncate_max_length = (
             truncate_max_length if truncate_max_length is not None and truncate_max_length > 0 else None
         )
@@ -162,7 +163,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
 
         return torch.cat(outputs, dim=1).to(model.device)
 
-    def _dynamic_chunking(self, output_embs, chunk_annotations, threshold=0.5):
+    def _dynamic_chunking(self, output_embs, chunk_annotations, threshold=0.8):
         """Dynamic chunking based on the similarity of the embeddings.
         This method is not implemented yet.
         """
@@ -219,15 +220,23 @@ class AbsTaskChunkedRetrieval(AbsTask):
                 return 1
             return (mid - start) * (end - mid + 1)
         
+        def if_span_is_too_big(start, end):
+            l = 0
+            for i in range(start, end + 1):
+                l += chunk_annotations[i][1] - chunk_annotations[i][0]
+            if l >= self.max_length:
+                return True
+        
         def recursive_merge(span1, span2):
             nonlocal tail
             start1 = span1.start
             end1 = span1.end
             start2 = span2.start
             end2 = span2.end
-            ls = []
+            split_points = []
             if start1 == end1 and start2 == end2:
-                if sim_matrix[start1, start2] > threshold:
+                chunk_fits = not(if_span_is_too_big(start1, end1) or if_span_is_too_big(start2, end2))
+                if sim_matrix[start1, start2] > threshold and chunk_fits:
                     span1.start = start1
                     span1.end = end2
                     span1.next = span2.next
@@ -238,21 +247,31 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     del span2
                     if span1.next is None:
                         tail = span1
-                    if span1.prev is not root:
-                        recursive_merge(span1.prev, span1)
+                    # if span1.prev is not root:
+                    #     recursive_merge(span1.prev, span1)
                 return
             
             for mid in range(min(start1, start2), max(end1, end2) + 1):
                 sim_inside = sum(cal_inside_sim(start1, mid, end2)) / cal_inside_coefficient(start1, mid, end2)
                 sim_outside = cal_outside_sim(start1, mid, end2) / cal_outside_coefficient(start1, mid, end2)
-                ls.append([sim_inside - sim_outside, mid, sim_inside, sim_outside])
+                split_points.append([sim_inside - sim_outside, mid, sim_inside, sim_outside])
             
-            ls = sorted(ls, key=lambda x: x[0], reverse=True)
-            best_mid = ls[0][1]
-            if best_mid == start2:
+            split_points = sorted(split_points, key=lambda x: x[0], reverse=True)
+            
+            # Find the best split with chunk_size < max_chunk_size
+            best_split = start2
+            for split_point in split_points:
+                mid = split_point[1]
+                if not(if_span_is_too_big(start1, mid - 1) or if_span_is_too_big(mid, end2)):
+                    best_split = mid
+                    break
+            
+            # If the split is the same as former, stop recursive split
+            if best_split == start2:
                 return
             else:
-                if best_mid == start1:
+                # If the split merges the two span
+                if best_split == start1:
                     span1.start = start1
                     span1.end = end2
                     span1.next = span2.next
@@ -264,15 +283,18 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     # update tail again for the original tail may be deleted
                     if span1.next is None:
                         tail = span1
-                    if span1.prev is not root:
-                        recursive_merge(span1.prev, span1)
+                    # if span1.prev is not root:
+                    #     recursive_merge(span1.prev, span1)
                     return
                 
-                span1.end = best_mid - 1
-                span2.start = best_mid
-                if span1.prev is not root:
-                    recursive_merge(span1.prev, span1)
-            
+                # The split changes the former span, recursive process the original splits
+                elif best_split < start2:
+                    span1.end = best_split - 1
+                    span2.start = best_split
+                    if span1.prev is not root:
+                        recursive_merge(span1.prev, span1)
+        
+        
         sim_matrix = cal_similarity(output_embs)
         np.fill_diagonal(sim_matrix, 0)
         root = Span(-1, -1)
@@ -356,6 +378,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         token_offsets = tokens.offset_mapping
                         chunk_spans.append([0, len(token_offsets)])
 
+                    org_chunk_spans = chunk_spans.copy()
                     chunk_spans = [self._extend_special_tokens(
                         [chunk_span],
                         n_instruction_tokens=n_instruction_tokens,
@@ -396,7 +419,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
 
                     if self.use_dynamic:
                         output_embs = self._dynamic_chunking(
-                            output_embs, chunk_spans[0], 0.5
+                            output_embs, org_chunk_spans, 0.5
                         )
 
                     corpus_embs.extend([output_embs])
@@ -461,13 +484,13 @@ class AbsTaskChunkedRetrieval(AbsTask):
                 for k in corpus_ids
             ]
 
-            chunk_annotations = self._calculate_annotations(model, corpus_texts)
+            org_chunk_annotations, extended_chunk_annotations = self._calculate_annotations(model, corpus_texts)
 
             corpus_embs = []
             with torch.no_grad():
                 for inputs in tqdm(
                     self._batch_inputs(
-                        list(zip(corpus_texts, chunk_annotations)),
+                        list(zip(corpus_texts, org_chunk_annotations, extended_chunk_annotations)),
                         batch_size=batch_size,
                     ),
                     total=(len(corpus_texts) // batch_size),
@@ -477,7 +500,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     else:
                         instr = ''
                     text_inputs = [instr + x[0] for x in inputs]
-                    annotations = [x[1] for x in inputs]
+                    org_annotations = [x[1] for x in inputs]
+                    extend_annotations = [x[2] for x in inputs]
                     model_inputs = self.tokenizer(
                         text_inputs,
                         return_tensors='pt',
@@ -493,20 +517,20 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     if self.long_late_chunking_embed_size > 0:
                         model_outputs = self._embed_with_overlap(model, model_inputs)
                         output_embs = chunked_pooling(
-                            [model_outputs], annotations, max_length=None
+                            [model_outputs], extend_annotations, max_length=None
                         )
                     else:  # truncation
                         model_outputs = model(**model_inputs)
                         output_embs = chunked_pooling(
                             model_outputs,
-                            annotations,
+                            extend_annotations,
                             max_length=self.truncate_max_length,
                         )
                     
                     if self.use_dynamic:
                         output_embs = [self._dynamic_chunking(
-                            output_emb, annotations, 0.5
-                        ) for output_emb in output_embs]
+                            output_emb, annotation, 0.5
+                        ) for output_emb, annotation in zip(output_embs, org_annotations)]
                     
                     corpus_embs.extend(output_embs)
 
@@ -627,19 +651,22 @@ class AbsTaskChunkedRetrieval(AbsTask):
             n_instruction_tokens = len(instr_tokens[0])
         else:
             n_instruction_tokens = 0
-        chunk_annotations = [
-            self._extend_special_tokens(
-                self.chunker.chunk(
-                    text,
-                    self.tokenizer,
-                    chunking_strategy=self.chunking_strategy,
-                    **self.chunking_args,
-                ),
+        org_chunk_annotations = []
+        extended_chunk_annotations = []
+        for text in corpus_texts:
+            org_annotation = self.chunker.chunk(
+                text,
+                self.tokenizer,
+                chunking_strategy=self.chunking_strategy,
+                **self.chunking_args,
+            )
+            org_chunk_annotations.append(org_annotation)
+            extended_annotation = self._extend_special_tokens(
+                org_annotation,
                 n_instruction_tokens=n_instruction_tokens,
             )
-            for text in corpus_texts
-        ]
-        return chunk_annotations
+            extended_chunk_annotations.append(extended_annotation)
+        return org_chunk_annotations, extended_chunk_annotations
 
     @staticmethod
     def _flatten_chunks(chunked_corpus):
