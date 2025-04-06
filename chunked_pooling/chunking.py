@@ -11,7 +11,7 @@ from transformers import AutoTokenizer
 # Set the logging level to WARNING to suppress INFO and DEBUG messages
 logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
 
-CHUNKING_STRATEGIES = ['semantic', 'fixed', 'sentences']
+CHUNKING_STRATEGIES = ['semantic', 'fixed', 'sentences', 'semantic_double_merging']
 
 
 class Chunker:
