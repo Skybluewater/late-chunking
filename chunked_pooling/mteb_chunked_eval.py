@@ -165,14 +165,22 @@ class AbsTaskChunkedRetrieval(AbsTask):
         return torch.cat(outputs, dim=1).to(model.device)
 
     def _calculate_embeddings_by_token(self, model, text):
-        inputs = self.tokenizer(text, return_tensors="pt").to("cuda")
-        outputs = model(**inputs, output_hidden_states=True)
+        # inputs = self.tokenizer(text, return_tensors="pt").to("cuda")
+        # outputs = model(**inputs, output_hidden_states=True)
 
-        # 获取最后一层的 token embeddings
-        last_hidden_state = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
-        token_embeddings = last_hidden_state[0]  # 取出第一个句子的所有 token 向量
-        mean_embedding = token_embeddings.mean(dim=0)
-        return mean_embedding.to("cpu").detach().numpy()
+        # # 获取最后一层的 token embeddings
+        # last_hidden_state = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
+        # token_embeddings = last_hidden_state[0]  # 取出第一个句子的所有 token 向量
+        # mean_embedding = token_embeddings.mean(dim=0)
+        # return mean_embedding.to("cpu").detach().numpy()
+        with torch.no_grad():
+            encode_input = self.tokenizer(
+                text, return_tensors="pt", padding=True, truncation=True
+            ).to(model.device)
+            model_output = model(**encode_input)
+            token_embeddings = model_output[0][:, 0]
+            token_embeddings = token_embeddings.float().detach().cpu().numpy()
+            return token_embeddings[0]
     
     def _calculate_query_embeddings(self, model, queries):
         query_embs = []
@@ -180,7 +188,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
             query_embs.append(self._calculate_embeddings_by_token(model, query))
         return np.array(query_embs)
 
-    def _dynamic_chunking(self, output_embs, chunk_annotations, threshold=0.8):
+    def _dynamic_chunking(self, output_embs, chunk_annotations, threshold=0.5):
         """Dynamic chunking based on the similarity of the embeddings.
         This method is not implemented yet.
         """
@@ -435,9 +443,12 @@ class AbsTaskChunkedRetrieval(AbsTask):
 
                     output_embs = []
                     for output, chunk_span in zip(model_outputs, chunk_spans):
-                        token_embeddings = output[0][0]
-                        output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
-                        output_emb = torch.mean(output_emb, dim=0, keepdim=True)
+                        if isinstance(model, XLMRobertaModel):
+                            output_emb = output[0][:, 0]
+                        else:
+                            token_embeddings = output[0][0]
+                            output_emb = token_embeddings[chunk_span[0][0]: chunk_span[0][1]]
+                            output_emb = torch.mean(output_emb, dim=0, keepdim=True)
                         output_emb = output_emb.float().detach().cpu().numpy()
                         output_embs.append(output_emb[0])
 
@@ -447,7 +458,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         )
                         for span in chunk_spans:
                             print(f"Span: {span[0]} - {span[1]}")
-                            print("".join(texts[span[0]:span[1] + 1]))
+                            # print("".join(texts[span[0]:span[1] + 1]))
                             
 
                     corpus_embs.extend([output_embs])
