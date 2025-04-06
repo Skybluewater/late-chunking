@@ -2,11 +2,13 @@ import bisect
 import logging
 import torch
 from typing import Dict, List, Optional, Tuple, Union
+from chonkie import SDPMChunker, SemanticChunker, SentenceTransformerEmbeddings
 
 from llama_index.core.node_parser import SemanticSplitterNodeParser, SemanticDoubleMergingSplitterNodeParser
 from llama_index.core.schema import Document
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from transformers import AutoTokenizer
+from sentence_transformers import SentenceTransformer
 
 # Set the logging level to WARNING to suppress INFO and DEBUG messages
 logging.getLogger('sentence_transformers').setLevel(logging.WARNING)
@@ -29,30 +31,59 @@ class Chunker:
         if embedding_model_name:
             self.embedding_model_name = embedding_model_name
 
-        self.embed_model = HuggingFaceEmbedding(
-            model_name=self.embedding_model_name,
+        # self.embed_model = HuggingFaceEmbedding(
+        #     model_name=self.embedding_model_name,
+        #     trust_remote_code=True,
+        #     embed_batch_size=1,
+        #     device='cuda' if torch.cuda.is_available() else 'cpu',
+        # )
+        # self.splitter = SemanticSplitterNodeParser(
+        #     embed_model=self.embed_model,
+        #     show_progress=True,
+        # )
+        self.embed_model = SentenceTransformer(
+            self.embedding_model_name,
             trust_remote_code=True,
-            embed_batch_size=1,
-            device='cuda' if torch.cuda.is_available() else 'cpu',
+            model_kwargs={"torch_dtype": torch.float32},  # or torch.float32
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
-        self.splitter = SemanticSplitterNodeParser(
-            embed_model=self.embed_model,
-            show_progress=True,
+        
+        model = SentenceTransformerEmbeddings(self.embed_model)
+        self.splitter = SemanticChunker(
+            embedding_model=model,
+            threshold=0.5,
+            chunk_size=256,
+            min_sentences=1
         )
     
     def _setup_semantic_double_merging_chunking(self, embedding_model_name):
         if embedding_model_name:
             self.embedding_model_name = embedding_model_name
 
-        self.embed_model = HuggingFaceEmbedding(
-            model_name=self.embedding_model_name,
+        # self.embed_model = HuggingFaceEmbedding(
+        #     model_name=self.embedding_model_name,
+        #     trust_remote_code=True,
+        #     embed_batch_size=1,
+        #     device='cuda' if torch.cuda.is_available() else 'cpu',
+        # )
+        # self.splitter = SemanticDoubleMergingSplitterNodeParser(
+        #     embed_model=self.embed_model,
+        #     show_progress=True,
+        # )
+        self.embed_model = SentenceTransformer(
+            self.embedding_model_name,
             trust_remote_code=True,
-            embed_batch_size=1,
-            device='cuda' if torch.cuda.is_available() else 'cpu',
+            model_kwargs={"torch_dtype": torch.float32},  # or torch.float32
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )
-        self.splitter = SemanticDoubleMergingSplitterNodeParser(
-            embed_model=self.embed_model,
-            show_progress=True,
+        
+        model = SentenceTransformerEmbeddings(self.embed_model)
+        self.splitter = SDPMChunker(
+            embedding_model=model,
+            threshold=0.5,
+            chunk_size=256,
+            min_sentences=1,
+            skip_window=1
         )
 
     def chunk_semantically(
@@ -63,7 +94,7 @@ class Chunker:
     ) -> List[Tuple[int, int]]:
         if self.embed_model is None:
             self._setup_semantic_chunking(embedding_model_name)
-
+        """
         # Get semantic nodes
         nodes = [
             (node.start_char_idx, node.end_char_idx)
@@ -100,7 +131,16 @@ class Chunker:
                 chunk_spans.append((start_chunk_index, end_chunk_index))
             else:
                 break
-
+        """
+        chunk_spans = []
+        token_offsets = 0
+        # Get semantic nodes
+        chunks = self.splitter.chunk(text)
+        for chunk in chunks:
+            tokens = tokenizer.encode_plus(chunk.text, return_offsets_mapping=True, add_special_tokens=False)
+            l = len(tokens.encodings[0])
+            chunk_spans.append((token_offsets, token_offsets + l))
+            token_offsets += l
         return chunk_spans
 
     def chunk_by_semantic_double_merging(
@@ -112,43 +152,15 @@ class Chunker:
         if self.embed_model is None:
             self._setup_semantic_double_merging_chunking(embedding_model_name)
 
-        # Get semantic nodes
-        nodes = [
-            (node.start_char_idx, node.end_char_idx)
-            for node in self.splitter.get_nodes_from_documents(
-                [Document(text=text)], show_progress=True
-            )
-        ]
-
-        # Tokenize the entire text
-        tokens = tokenizer.encode_plus(
-            text,
-            return_offsets_mapping=True,
-            add_special_tokens=False,
-            padding=True,
-            truncation=True,
-        )
-        token_offsets = tokens.offset_mapping
-
         chunk_spans = []
-
-        for char_start, char_end in nodes:
-            # Convert char indices to token indices
-            start_chunk_index = bisect.bisect_left(
-                [offset[0] for offset in token_offsets], char_start
-            )
-            end_chunk_index = bisect.bisect_right(
-                [offset[1] for offset in token_offsets], char_end
-            )
-
-            # Add the chunk span if it's within the tokenized text
-            if start_chunk_index < len(token_offsets) and end_chunk_index <= len(
-                token_offsets
-            ):
-                chunk_spans.append((start_chunk_index, end_chunk_index))
-            else:
-                break
-
+        token_offsets = 0
+        # Get semantic nodes
+        chunks = self.splitter.chunk(text)
+        for chunk in chunks:
+            tokens = tokenizer.encode_plus(chunk.text, return_offsets_mapping=True, add_special_tokens=False)
+            l = len(tokens.encodings[0])
+            chunk_spans.append((token_offsets, token_offsets + l))
+            token_offsets += l
         return chunk_spans
     
     def chunk_by_tokens(
