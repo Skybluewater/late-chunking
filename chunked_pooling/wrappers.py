@@ -147,6 +147,9 @@ def load_model(model_name, model_weights=None, **model_kwargs):
         else:
             has_instructions = False
     else:
+        if model_name == "BAAI/bge-m3":
+            # model = 
+            pass
         model = AutoModel.from_pretrained(model_name, trust_remote_code=True)
         has_instructions = False
 
