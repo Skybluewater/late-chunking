@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from chunked_pooling import chunked_pooling
 from chunked_pooling.chunking import Chunker
+from transformers import XLMRobertaModel
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,22 @@ class AbsTaskChunkedRetrieval(AbsTask):
 
         return torch.cat(outputs, dim=1).to(model.device)
 
+    def _calculate_embeddings_by_token(self, model, text):
+        inputs = self.tokenizer(text, return_tensors="pt").to("cuda")
+        outputs = model(**inputs, output_hidden_states=True)
+
+        # 获取最后一层的 token embeddings
+        last_hidden_state = outputs.last_hidden_state  # [batch_size, seq_len, hidden_dim]
+        token_embeddings = last_hidden_state[0]  # 取出第一个句子的所有 token 向量
+        mean_embedding = token_embeddings.mean(dim=0)
+        return mean_embedding.to("cpu").detach().numpy()
+    
+    def _calculate_query_embeddings(self, model, queries):
+        query_embs = []
+        for query in queries:
+            query_embs.append(self._calculate_embeddings_by_token(model, query))
+        return np.array(query_embs)
+
     def _dynamic_chunking(self, output_embs, chunk_annotations, threshold=0.8):
         """Dynamic chunking based on the similarity of the embeddings.
         This method is not implemented yet.
@@ -179,6 +196,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
             norm_embeddings = embeddings / (norms + 1e-8)
             sim_matrix = np.dot(norm_embeddings, norm_embeddings.T)
+            # Set diagonal to 1 (self-similarity)
+            np.fill_diagonal(sim_matrix, 1)
             n = sim_matrix.shape[0]
             indices = np.arange(n)
             # Compute the squared difference matrix: element (i,j) = (|i-j|)^2
@@ -190,7 +209,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
                 # The dis is 1 / 1 + (|i - j|)
                 denom = 1 / (1 + (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1))) * self.alpha)
             else:
-                denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))**2
+                denom = np.ones((n, n))
             # denom = (np.abs(indices.reshape(-1, 1) - indices.reshape(1, -1)))
             # Avoid division by zero on the diagonal (set divisor to 1 for diagonal elements)
             denom[denom == 0] = 1
@@ -247,8 +266,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     del span2
                     if span1.next is None:
                         tail = span1
-                    # if span1.prev is not root:
-                    #     recursive_merge(span1.prev, span1)
+                    if span1.prev is not root:
+                        recursive_merge(span1.prev, span1)
                 return
             
             for mid in range(min(start1, start2), max(end1, end2) + 1):
@@ -283,12 +302,12 @@ class AbsTaskChunkedRetrieval(AbsTask):
                     # update tail again for the original tail may be deleted
                     if span1.next is None:
                         tail = span1
-                    # if span1.prev is not root:
-                    #     recursive_merge(span1.prev, span1)
+                    if span1.prev is not root:
+                        recursive_merge(span1.prev, span1)
                     return
                 
                 # The split changes the former span, recursive process the original splits
-                elif best_split < start2:
+                elif best_split != start2:
                     span1.end = best_split - 1
                     span2.start = best_split
                     if span1.prev is not root:
@@ -312,14 +331,14 @@ class AbsTaskChunkedRetrieval(AbsTask):
         # Collect the merged spans
         pooled_embeddings = []
         span = root.next
+        chunk_spans =[]
         while span is not None:
-            print(f"Span: {span.start} - {span.end}")
-            # print(f"text is: {", ".join(chunks[span.start:span.end + 1])}")
             # Compute mean pooled embedding for this span (inclusive of both start and end indices)
             pooled_embed = np.mean(output_embs[span.start:span.end + 1], axis=0)
             pooled_embeddings.append(pooled_embed)
+            chunk_spans.append([span.start, span.end])
             span = span.next
-        return pooled_embeddings
+        return pooled_embeddings, chunk_spans
     
     def _use_chunking(
             self,
@@ -339,7 +358,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
         if hasattr(model, 'encode_queries'):
             query_embs = model.encode_queries(query_texts)
         else:
-            query_embs = model.encode(query_texts)
+            if isinstance(model, XLMRobertaModel):
+                query_embs = self._calculate_query_embeddings(model, query_texts)
+            else:
+                query_embs = model.encode(query_texts)
 
         corpus_ids = list(corpus.keys())
         corpus = [corpus[k] for k in corpus_ids]
@@ -370,8 +392,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         n_instruction_tokens = 0
 
                     chunk_spans = []
+                    texts = []
                     for text in input:
                         text = text['text']
+                        texts.append(text)
                         tokens = self.tokenizer.encode_plus(
                             text, return_offsets_mapping=True, add_special_tokens=False
                         )
@@ -418,9 +442,13 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         output_embs.append(output_emb[0])
 
                     if self.use_dynamic:
-                        output_embs = self._dynamic_chunking(
-                            output_embs, org_chunk_spans, 0.5
+                        output_embs, chunk_spans = self._dynamic_chunking(
+                            output_embs, org_chunk_spans
                         )
+                        for span in chunk_spans:
+                            print(f"Span: {span[0]} - {span[1]}")
+                            print("".join(texts[span[0]:span[1] + 1]))
+                            
 
                     corpus_embs.extend([output_embs])
                 doc_counter += len(inputs)
@@ -472,7 +500,10 @@ class AbsTaskChunkedRetrieval(AbsTask):
             if hasattr(model, 'encode_queries'):
                 query_embs = model.encode_queries(query_texts)
             else:
-                query_embs = model.encode(query_texts)
+                if isinstance(model, XLMRobertaModel):
+                    query_embs = self._calculate_query_embeddings(model, query_texts)
+                else:
+                    query_embs = model.encode(query_texts)
 
             corpus_ids = list(corpus.keys())
             corpus_texts = [
@@ -527,10 +558,13 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             max_length=self.truncate_max_length,
                         )
                     
+                    output_embs = []
                     if self.use_dynamic:
-                        output_embs = [self._dynamic_chunking(
-                            output_emb, annotation, 0.5
-                        ) for output_emb, annotation in zip(output_embs, org_annotations)]
+                        for output_emb, annotation in zip(output_embs, org_annotations):
+                            output_emb, chunk_spans = self._dynamic_chunking(
+                                output_emb, annotation
+                            )
+                            output_embs.append(output_emb)
                     
                     corpus_embs.extend(output_embs)
 
