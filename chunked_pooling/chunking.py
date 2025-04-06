@@ -188,6 +188,7 @@ class Chunker:
             if tokens.tokens(0)[i] in ('.', '!', '?') and (
                 (len(tokens.tokens(0)) == i + 1)
                 or (tokens.token_to_chars(i).end != tokens.token_to_chars(i + 1).start)
+                or True
             ):
                 count_chunks += 1
                 if count_chunks == n_sentences:
