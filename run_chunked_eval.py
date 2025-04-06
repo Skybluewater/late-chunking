@@ -176,6 +176,38 @@ def main(
     model.eval()
 
     # Evaluate with late chunking
+    # tasks = [
+    #     task_cls(
+    #         chunked_pooling_enabled=False,
+    #         tokenizer=tokenizer,
+    #         prune_size=prune_size,
+    #         truncate_max_length=truncate_max_length,
+    #         long_late_chunking_embed_size=long_late_chunking_embed_size,
+    #         long_late_chunking_overlap_size=long_late_chunking_overlap_size,
+    #         use_dynamic=True,
+    #         dis_comp=dis_comp,
+    #         alpha=dis_alpha,
+    #         max_length=max_length,
+    #         **chunking_args,
+    #     )
+    # ]
+
+    # evaluation = MTEB(
+    #     tasks=tasks,
+    #     chunked_pooling_enabled=False,
+    #     tokenizer=tokenizer,
+    #     prune_size=prune_size,
+    #     **chunking_args,
+    # )
+    # evaluation.run(
+    #     model,
+    #     output_folder='BAAI-results-dynamic-0.8',
+    #     eval_splits=[eval_split],
+    #     overwrite_results=True,
+    #     batch_size=BATCH_SIZE,
+    #     encode_kwargs={'batch_size': BATCH_SIZE},
+    # )
+    
     tasks = [
         task_cls(
             chunked_pooling_enabled=False,
@@ -201,39 +233,7 @@ def main(
     )
     evaluation.run(
         model,
-        output_folder='BAAI-results-dynamic-0.8',
-        eval_splits=[eval_split],
-        overwrite_results=True,
-        batch_size=BATCH_SIZE,
-        encode_kwargs={'batch_size': BATCH_SIZE},
-    )
-    
-    tasks = [
-        task_cls(
-            chunked_pooling_enabled=False,
-            tokenizer=tokenizer,
-            prune_size=prune_size,
-            truncate_max_length=truncate_max_length,
-            long_late_chunking_embed_size=long_late_chunking_embed_size,
-            long_late_chunking_overlap_size=long_late_chunking_overlap_size,
-            use_dynamic=False,
-            dis_comp=dis_comp,
-            alpha=dis_alpha,
-            max_length=max_length,
-            **chunking_args,
-        )
-    ]
-
-    evaluation = MTEB(
-        tasks=tasks,
-        chunked_pooling_enabled=False,
-        tokenizer=tokenizer,
-        prune_size=prune_size,
-        **chunking_args,
-    )
-    evaluation.run(
-        model,
-        output_folder='BAAI-results-normal',
+        output_folder='BAAI-results-dynamic-new-0.5',
         eval_splits=[eval_split],
         overwrite_results=True,
         batch_size=BATCH_SIZE,

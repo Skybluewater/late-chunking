@@ -456,11 +456,16 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         output_embs, chunk_spans = self._dynamic_chunking(
                             output_embs, org_chunk_spans
                         )
+                        if isinstance(model, XLMRobertaModel):
+                            output_embs = []
                         for span in chunk_spans:
                             print(f"Span: {span[0]} - {span[1]}")
+                            text = "".join(texts[span[0]:span[1] + 1])
+                            if isinstance(model, XLMRobertaModel):
+                                emb = self._calculate_embeddings_by_token(model, text)
+                                output_embs.append(emb)
                             # print("".join(texts[span[0]:span[1] + 1]))
-                            
-
+                    
                     corpus_embs.extend([output_embs])
                 doc_counter += len(inputs)
         
