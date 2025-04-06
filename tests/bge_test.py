@@ -25,3 +25,12 @@ token_embeddings = last_hidden_state[0]  # 取出第一个句子的所有 token 
 mean_embedding = token_embeddings.mean(dim=0)
 # 或者获取所有层的 hidden states
 all_hidden_states = outputs.hidden_states  # 包含各层的 hidden states
+
+with torch.no_grad():
+    encoded_input_1 = tokenizer("Hello World", padding=True, truncation=True, return_tensors='pt')
+    model_output_1 = model(**encoded_input_1)
+    embeddings_1 = model_output_1[0][:, 0]
+
+print(embeddings_1.shape)  # 输出形状
+print(embeddings_1[0])  # 输出第一个句子的嵌入向量
+print(embeddings_1[0].shape)  # 输出嵌入向量的形状

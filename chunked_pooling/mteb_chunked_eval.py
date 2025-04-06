@@ -546,6 +546,7 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         instr = model.get_instructions()[1]
                     else:
                         instr = ''
+                    texts = [inputs[i][0] for i in range(len(inputs))]
                     text_inputs = [instr + x[0] for x in inputs]
                     org_annotations = [x[1] for x in inputs]
                     extend_annotations = [x[2] for x in inputs]
@@ -580,6 +581,14 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             output_emb, chunk_spans = self._dynamic_chunking(
                                 output_emb, annotation
                             )
+                            if isinstance(model, XLMRobertaModel):
+                                output_emb = []
+                            for span in chunk_spans:
+                                print(f"Span: {span[0]} - {span[1]}")
+                                text = "".join(texts[span[0]:span[1] + 1])
+                                if isinstance(model, XLMRobertaModel):
+                                    emb = self._calculate_embeddings_by_token(model, text)
+                                    output_emb.append(emb)
                             output_embs.append(output_emb)
                     
                     corpus_embs.extend(output_embs)
