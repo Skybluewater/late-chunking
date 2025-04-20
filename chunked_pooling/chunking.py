@@ -44,7 +44,7 @@ class Chunker:
         self.embed_model = SentenceTransformer(
             self.embedding_model_name,
             trust_remote_code=True,
-            model_kwargs={"torch_dtype": torch.float32},  # or torch.float32
+            model_kwargs={"torch_dtype": torch.float32 if embedding_model_name is "BAAI/bge-m3" else torch.float16},  # or torch.float32
             device="cuda" if torch.cuda.is_available() else "cpu",
         )
         

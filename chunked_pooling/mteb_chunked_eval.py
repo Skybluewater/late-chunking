@@ -12,6 +12,7 @@ from tqdm import tqdm
 from chunked_pooling import chunked_pooling
 from chunked_pooling.chunking import Chunker
 from transformers import XLMRobertaModel
+from chunked_pooling.wrappers import JinaEmbeddingsV3Wrapper
 
 logger = logging.getLogger(__name__)
 
@@ -173,14 +174,19 @@ class AbsTaskChunkedRetrieval(AbsTask):
         # token_embeddings = last_hidden_state[0]  # 取出第一个句子的所有 token 向量
         # mean_embedding = token_embeddings.mean(dim=0)
         # return mean_embedding.to("cpu").detach().numpy()
-        with torch.no_grad():
-            encode_input = self.tokenizer(
-                text, return_tensors="pt", padding=True, truncation=True
-            ).to(model.device)
-            model_output = model(**encode_input)
-            token_embeddings = model_output[0][:, 0]
-            token_embeddings = token_embeddings.float().detach().cpu().numpy()
-            return token_embeddings[0]
+        if isinstance(model, XLMRobertaModel):
+            with torch.no_grad():
+                encode_input = self.tokenizer(
+                    text, return_tensors="pt", padding=True, truncation=True
+                ).to(model.device)
+                model_output = model(**encode_input)
+                token_embeddings = model_output[0][:, 0]
+                token_embeddings = token_embeddings.float().detach().cpu().numpy()
+                return token_embeddings[0]
+        elif isinstance(model, JinaEmbeddingsV3Wrapper):
+            with torch.no_grad():
+                return model._model.encode(text)
+        raise NotImplementedError("Model type not supported")
     
     def _calculate_query_embeddings(self, model, queries):
         query_embs = []
@@ -461,9 +467,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                         for span in chunk_spans:
                             print(f"Span: {span[0]} - {span[1]}")
                             text = "".join(texts[span[0]:span[1] + 1])
-                            if isinstance(model, XLMRobertaModel):
-                                emb = self._calculate_embeddings_by_token(model, text)
-                                output_embs.append(emb)
+                            emb = self._calculate_embeddings_by_token(model, text)
+                            output_embs.append(emb)
                             # print("".join(texts[span[0]:span[1] + 1]))
                     
                     corpus_embs.extend([output_embs])
@@ -586,9 +591,8 @@ class AbsTaskChunkedRetrieval(AbsTask):
                             for span in chunk_spans:
                                 print(f"Span: {span[0]} - {span[1]}")
                                 text = "".join(texts[span[0]:span[1] + 1])
-                                if isinstance(model, XLMRobertaModel):
-                                    emb = self._calculate_embeddings_by_token(model, text)
-                                    output_emb.append(emb)
+                                emb = self._calculate_embeddings_by_token(model, text)
+                                output_emb.append(emb)
                             output_embs.append(output_emb)
                     
                     corpus_embs.extend(output_embs)

@@ -20,11 +20,10 @@ DEFAULT_DIS_COMP = 3
 DEFAULT_DIS_ALPHA = 1
 DEFAULT_MAX_LENGTH = 256
 
-
 @click.command()
 @click.option(
     '--model-name',
-    default='jinaai/jina-embeddings-v3',
+    default='jinaai/jina-embeddings-v3',  # "BAAI/bge-m3"
     help='The name of the model to use.',
 )
 @click.option(
@@ -216,11 +215,11 @@ def main(
             truncate_max_length=truncate_max_length,
             long_late_chunking_embed_size=long_late_chunking_embed_size,
             long_late_chunking_overlap_size=long_late_chunking_overlap_size,
-            use_dynamic=True,
+            use_dynamic=False,
             dis_comp=dis_comp,
             alpha=dis_alpha,
             max_length=max_length,
-            **chunking_args,
+            **chunking_args_semantic,
         )
     ]
 
@@ -229,11 +228,44 @@ def main(
         chunked_pooling_enabled=False,
         tokenizer=tokenizer,
         prune_size=prune_size,
-        **chunking_args,
+        **chunking_args_semantic,
     )
     evaluation.run(
         model,
-        output_folder='BAAI-results-dynamic-new-0.5',
+        output_folder='Jina-results-semantic-0.5',
+        eval_splits=[eval_split],
+        overwrite_results=True,
+        batch_size=BATCH_SIZE,
+        encode_kwargs={'batch_size': BATCH_SIZE},
+    )
+    
+    
+    tasks = [
+        task_cls(
+            chunked_pooling_enabled=False,
+            tokenizer=tokenizer,
+            prune_size=prune_size,
+            truncate_max_length=truncate_max_length,
+            long_late_chunking_embed_size=long_late_chunking_embed_size,
+            long_late_chunking_overlap_size=long_late_chunking_overlap_size,
+            use_dynamic=True,
+            dis_comp=dis_comp,
+            alpha=dis_alpha,
+            max_length=max_length,
+            **chunking_args_sentences,
+        )
+    ]
+
+    evaluation = MTEB(
+        tasks=tasks,
+        chunked_pooling_enabled=False,
+        tokenizer=tokenizer,
+        prune_size=prune_size,
+        **chunking_args_sentences,
+    )
+    evaluation.run(
+        model,
+        output_folder='Jina-results-new-dynamic-0.5',
         eval_splits=[eval_split],
         overwrite_results=True,
         batch_size=BATCH_SIZE,
